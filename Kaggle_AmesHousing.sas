@@ -1,0 +1,857 @@
+FILENAME REFFILE '/home/jrasmusvorrath0/HousingTrain.csv';
+
+PROC IMPORT DATAFILE=REFFILE
+	DBMS=CSV
+	OUT=Ames_train;
+	GETNAMES=YES;
+RUN;
+
+PROC CONTENTS DATA=Ames_train; RUN;
+*proc print data = Ames_train;* run;
+
+
+/*
+data Ames_train_sub; set Ames_train;
+where id >= 1 AND id <= 1000; run;														*Partion training set for presubmission cross-validation, if desired;
+
+*proc print data = Ames_train_sub;* run;
+
+data Ames_train_sub2; set Ames_train;
+where id > 1000; run;
+
+*proc print data = Ames_train_sub2;* run;
+
+data Ames_train_val; set Ames_train_sub2;												*Using second subset to create empty SalePrice column;
+SalePrice = .;
+
+*proc print data = Ames_train_sub;* run;
+*proc print data = Ames_train_val;* run;
+
+data Ames_train_test; set Ames_train_sub Ames_train_val; run;							*Concatenating subsets to create alternative test set;
+
+proc contents data = Ames_train_test; run;
+*proc print data = Ames_train_test;* run;
+*/
+
+
+data Ames_train_missing1; set Ames_train;												*Fixing character missing value codes;
+array change _character_;
+   do over change;
+      if change=-1 then change = .;
+   end;
+run;
+
+*proc contents data = Ames_train_missing1;* run;
+
+/*proc export data= Ames_train_missing1													*Verifying file contents
+     outfile="/home/jrasmusvorrath0/Missingtest.csv"
+     dbms=csv 
+     replace;
+run;*/
+
+data Ames_train_missing2; set Ames_train_missing1;										*Fixing numeric missing value codes;
+array change _numeric_;
+        do over change;
+            if change=-1 then change = .;
+        end;
+run;
+
+*proc contents data = Ames_train_missing2;* run;
+
+/*proc export data= Ames_train_missing2													*Verifying file contents;
+     outfile="/home/jrasmusvorrath0/Missingtest3.csv"
+     dbms=csv 
+     replace;
+run;*/
+
+data Ames_train_missing3; set Ames_train_missing2;										*Fixing unusual 'Neighborhood' factor variable value codes;
+array change Neighborhood;
+   do over change;
+      if change="-1mes" then change = .;
+   end;
+run;
+
+*proc contents data = Ames_train_missing3;* run;
+*proc print data = Ames_train_missing3;* run;
+
+
+proc means data = Ames_train_missing3 nmiss n; run;										*Verifying missing value counts;
+
+
+proc mi data=Ames_train_missing3 seed=999 nimpute=1 out=Ames_train_missing_imputed;		*Imputing missing continuous variable values-- NB: Check of categorical missing values;
+fcs nbiter=10 reg(/details);																*indicated no logical need for imputation;
+var LotFrontage GarageYrBlt MasVnrArea 
+	MSSubClass OverallQual OverallCond LotArea GrLivArea
+	BsmtFinSF1 BsmtUnfSF TotalBsmtSF BsmtFullBath BsmtHalfBath 
+	FullBath HalfBath BedroomAbvGr TotRmsAbvGrd 
+	Fireplaces GarageCars GarageArea 
+	WoodDeckSF OpenPorchSF 
+	MoSold YrSold SalePrice;
+run;
+
+proc means data = Ames_train_missing_imputed nmiss n; run;								*Verifying missing value counts;
+
+*proc print data = Ames_train_missing_imputed;* run;
+
+
+proc sgscatter data = Ames_train_missing_imputed;										*EDA: Scatterplot matrix, anticipated continuous variables of interest;
+matrix SalePrice GrLivArea OverallQual OverallCond YearBuilt YearRemodAdd;
+run;
+
+proc sgscatter data = Ames_train_missing_imputed;										*EDA: Scatterplot matrix, anticipated continuous variables of interest;
+matrix LotFrontage LotArea 
+	BsmtFinSF1 BsmtUnfSF TotalBsmtSF BsmtFullBath BsmtHalfBath;
+run;
+
+proc sgscatter data = Ames_train_missing_imputed;										*EDA: Scatterplot matrix, anticipated continuous variables of interest;
+matrix FullBath HalfBath BedroomAbvGr TotRmsAbvGrd
+	_1stFlrSF _2ndFlrSF "Kitche-1bvGr"n;
+run;
+
+proc sgscatter data = Ames_train_missing_imputed;										*EDA: Scatterplot matrix, anticipated continuous variables of interest;
+matrix Fireplaces GarageCars GarageArea YrSold;
+run;
+
+
+proc sgscatter data = Ames_train_missing_imputed;										*EDA: Scatterplot matrix, unlikely continuous variables of interest;
+matrix _3SsnPorch ScreenPorch MiscVal MoSold;
+run;
+
+
+proc freq data = Ames_train_missing_imputed;											*EDA: Frequency counts, possible categorical variables of interest;
+tables BsmtQual BsmtCond BsmtExposure BsmtFinType1 BsmtFinType2 
+	Electrical Utilities Heating HeatingQC CentralAir KitchenQual
+	GarageType GarageYrBlt GarageFinish GarageQual GarageCond
+	MsZoning Neighborhood Condition1 Condition2
+	Street PavedDrive LotShape LandContour LotConfig LandSlope 
+	BldgType HouseStyle Roofstyle RoofMatl Foundation
+	Exterior1st Exterior2nd MasVnrArea ExterQual ExterCond
+	SaleType SaleCondition;
+run;
+
+
+data reg1; set Ames_train_missing_imputed;											
+log_SalePrice = log(SalePrice);															*EDA: log of SalePrice, given scatterplot diagnosis;
+log_GrLivArea = log(GrLivArea); run;													*EDA: log of GrLivArea, given scatterplot diagnosis;
+
+*proc print data = reg1;* run;
+
+
+data reg2; set reg1;																	*Dummy-coding Neighborhoods & possible interaction, for EDA & PROC REG;
+if Neighborhood = "BrkSide" then d1 = 1; else d1 = 0;
+if Neighborhood = "Edwards" then d2 = 1; else d2 = 0;
+if Neighborhood = "NAmes" then d3 = 1; else d3 = 0;
+if Neighborhood = "BrDale" then d4 = 1; else d4 = 0;
+if Neighborhood = "NridgHt" then d5 = 1; else d5 = 0;
+if Neighborhood = "OldTown" then d6 = 1; else d6 = 0;
+if Neighborhood = "Sawyer" then d7 = 1; else d7 = 0;
+if Neighborhood = "SawyerW" then d8 = 1; else d8 = 0;
+if Neighborhood = "Somerst" then d9 = 1; else d9 = 0;
+if Neighborhood = "StoneBr" then d10 = 1; else d10 = 0;
+if Neighborhood = "Gilbert" then d11 = 1; else d11 = 0;
+if Neighborhood = "Mitchel" then d12 = 1; else d12 = 0;
+if Neighborhood = "NWAmes" then d13 = 1; else d13 = 0;
+if Neighborhood = "NoRidge" then d14 = 1; else d14 = 0;
+if Neighborhood = "ClearCr" then d15 = 1; else d15 = 0;
+intA = d1*log_GrLivArea; intB = d2*log_GrLivArea; intC = d3*log_GrLivArea; 
+intD = d4*log_GrLivArea; intE = d5*log_GrLivArea; intF = d6*log_GrLivArea; 
+intG = d7*log_GrLivArea; intH = d8*log_GrLivArea; intI = d9*log_GrLivArea;
+intJ = d10*log_GrLivArea; intK = d11*log_GrLivArea; intL = d12*log_GrLivArea; 
+intM = d13*log_GrLivArea; run;
+
+*proc print data = reg2;* run;
+
+data reg3; set reg2;																	*Dummy-coding potential categorical variable levels of interest, for PROC REG;
+if BldgType = "1Fam" then dBT_1 = 1; else dBT_1 = 0;
+if BldgType = "2fmCon" then dBT_2 = 1; else dBT_2 = 0;
+if BldgType = "Duplex" then dBT_3 = 1; else dBT_3 = 0;
+if BldgType = "TwnhsE" then dBT_4 = 1; else dBT_4 = 0;
+if BldgType = "Twnhs" then dBT_5 = 1; else dBT_5 = 0;
+if Condition2 = "Norm" then dC2_1 = 1; else dC2_1 = 0;
+if Condition2 = "Artery" then dC2_2 = 1; else dC2_2 = 0;
+if Condition2 = "RRNn" then dC2_3 = 1; else dC2_3 = 0;
+if Condition2 = "Feedr" then dC2_4 = 1; else dC2_4 = 0;
+if Condition2 = "PosN" then dC2_5 = 1; else dC2_5 = 0;
+if Condition2 = "PosA" then dC2_6 = 1; else dC2_6 = 0;
+if Condition2 = "RRAn" then dC2_7 = 1; else dC2_7 = 0;
+if Condition2 = "RRAe" then dC2_8 = 1; else dC2_8 = 0;
+if SaleCondition = "Normal" then dSC_1 = 1; else dSC_1 = 0;
+if SaleCondition = "Abnormal" then dSC_2 = 1; else dSC_2 = 0;
+if SaleCondition = "Partial" then dSC_3 = 1; else dSC_3 = 0;
+if SaleCondition = "AdjLand" then dSC_4 = 1; else dSC_4 = 0;
+if SaleCondition = "Alloca" then dSC_5 = 1; else dSC_5 = 0;
+if SaleCondition = "Family" then dSC_6 = 1; else dSC_6 = 0;
+if KitchenQual = "Gd" then dKQ_1 = 1; else dKQ_1 = 0;
+if KitchenQual = "TA" then dKQ_2 = 1; else dKQ_2 = 0;
+if KitchenQual = "Ex" then dKQ_3 = 1; else dKQ_3 = 0;
+if KitchenQual = "Fa" then dKQ_4 = 1; else dKQ_4 = 0;
+if KitchenQual = "Po" then dKQ_5 = 1; else dKQ_5 = 0;
+run;
+
+
+
+proc glmselect data = reg3 plots = (CriterionPanel ASE ASEPlot) seed = 99;				*1st-Pass Hypothesis, Automated Selection and CV, using Neighborhoods best meeting LR Assumptions;
+partition fraction(validate=0.3 test=0.2);													*NB: exploring potential categorical variable levels of interest; 
+class Neighborhood MSZoning Condition1 Condition2 Street
+	Utilities Heating HeatingQC CentralAir Electrical KitchenQual FireplaceQu
+	LotFrontage LotShape LotConfig LandSlope LandContour 
+	BldgType HouseStyle RoofStyle RoofMatl Foundation 
+	Exterior1st Exterior2nd ExterQual ExterCond MasVnrType 
+	BsmtQual BsmtCond BsmtExposure BsmtFinType1 BsmtFinType2 
+	GarageType GarageFinish GarageQual GarageCond PavedDrive
+	SaleType SaleCondition / param = glm; 
+where Neighborhood in ("BrkSide", "Edwards", "NAmes", "BrDale", "NridgHt", "OldTown", "Sawyer", 
+	"SawyerW", "Somerst", "StoneBr", "Gilbert", "Mitchel", "NWAmes");
+model log_SalePrice = log_GrLivArea LotArea OverallCond OverallQual YearBuilt BsmtFullBath BsmtFinSF1
+	d1 d2 d3 d4 d6 d7 d8 d9 d11 d12 d13 dBT_1 dBT_5 dC2_5 dC2_3 dKQ_2 dKQ_3 dSC_1 dSC_2 dSC_3 dSC_6
+/ selection = lasso(choose = AIC stop = AICC) details = steps showpvalues;
+run;
+
+
+proc reg data = reg3 plots(label)=(CooksD RStudentByLeverage) outest= reg_est1 edf;		*1st-Pass Regression Analysis, exploring automated selection output;
+model log_SalePrice = log_GrLivArea BsmtFullBath OverallQual YearBuilt
+	dBT_5 dKQ_2 dKQ_3 dSC_3 / VIF influence adjrsq;
+run; quit;
+
+
+data reg3a; set reg3;																	*Removing unusually high leverage observations;
+if _n_ = 1299 then delete;
+if _n_ = 524 then delete;
+run;
+
+
+proc reg data = reg3a plots(label) outest= reg_est2 edf;								*Registering effect of high leverage removal;
+model log_SalePrice = log_GrLivArea BsmtFullBath OverallQual YearBuilt
+	dBT_5 dKQ_2 dKQ_3 dSC_3 / VIF;
+run; quit;
+
+
+proc glm data = reg3a plots = all outstat = reg_est3;									*Registering PROC GLM output statistics;
+model log_SalePrice = log_GrLivArea BsmtFullBath OverallQual YearBuilt
+	dBT_5 dKQ_2 dKQ_3 dSC_3 / cli solution;
+output out = results p = predict;
+run;
+
+
+proc sgscatter data = reg3a;															*EDA: Scatterplot matrix of automatically selected continous variables;
+matrix log_SalePrice log_GrLivArea OverallQual YearBuilt;
+run;
+
+
+
+proc reg data = reg3a plots(label) outest= reg_est4 edf;								*2nd-Pass Hypothesis, including additional continuous variables by inductive reasoning;										
+model log_SalePrice = log_GrLivArea OverallQual OverallCond YearBuilt 
+	LotFrontage LotArea GarageCars Fireplaces 
+	BsmtFullBath TotalBsmtSF BsmtUnfSF
+	dBT_5 dKQ_2 dKQ_3 dSC_3 / VIF;
+run; quit;
+
+proc reg data = reg3a plots(label) outest= reg_est5 edf;								*Refining list of continuous variables, paring down categorical levels not broadly applicable;		
+model log_SalePrice = log_GrLivArea OverallQual OverallCond YearBuilt
+	LotArea GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath
+	dBT_5 dKQ_3 dSC_3 / VIF;
+run; quit;
+
+*proc contents data = reg3a;* run;
+
+
+data reg4; set reg3a;																	*log of LotArea, given regression diagnostic plots;		
+log_LotArea = log(LotArea); run;		
+		
+
+proc reg data = reg4 plots(label) outest= reg_est6 edf;									*Registering effect of log transform of LotArea, further paring down of dummy categorical levels;		
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath
+	dKQ_3 dSC_3 / VIF;
+run; quit;
+
+proc glm data = reg4 plots = all outstat = reg_est7;									*Registering PROC GLM output statistics;		
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath
+	dKQ_3 dSC_3 / cli solution;
+output out = results2 p = predict2;
+run;
+
+proc sgscatter data = reg4;																*EDA: Scatterplot matrix of additional continuous variables of interest;	
+matrix log_SalePrice log_GrLivArea log_LotArea OverallQual YearBuilt;
+run;
+
+
+
+proc reg data = reg4 plots(label) outest= reg_est8 edf;									*Parsimonious preferred model, paring down all dummy categorial levels not broadly applicable;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath / VIF;
+run; quit;
+
+proc glm data = reg4 plots = all outstat = reg_est9;									*Registering PROC GLM output statistics;		
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath / cli solution;
+output out = results3 p = predict3;
+run;
+
+
+proc means data = reg4;																	*Registering distributions of parsimonious preferred predictors;
+var log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath;
+run;
+
+
+
+data reg5; set reg4;																	*3rd-Pass Analysis, dummy-coding potentially applicable categorical variables, selected by inductive reasoning;
+if MSZoning = "A" then dMS_1 = 1; else dMS_1 = 0;
+if MSZoning = "C" then dMS_2 = 1; else dMS_2 = 0;
+if MSZoning = "FV" then dMS_3 = 1; else dMS_3 = 0;
+if MSZoning = "I" then dMS_4 = 1; else dMS_4 = 0;
+if MSZoning = "RH" then dMS_5 = 1; else dMS_5 = 0;
+if MSZoning = "RL" then dMS_6 = 1; else dMS_6 = 0;
+if MSZoning = "RP" then dMS_7 = 1; else dMS_7 = 0;
+if MSZoning = "RM" then dMS_8 = 1; else dMS_8 = 0;
+
+if LotConfig = "Inside" then dLC_1 = 1; else dLC_1 = 0;
+if LotConfig = "Corner" then dLC_2 = 1; else dLC_2 = 0;
+if LotConfig = "CulDSac" then dLC_3 = 1; else dLC_3 = 0;
+if LotConfig = "FR2" then dLC_4 = 1; else dLC_4 = 0;
+if LotConfig = "FR3" then dLC_5 = 1; else dLC_5 = 0;
+
+if ExterQual = "Ex" then dEQ_1 = 1; else dEQ_1 = 0;
+if ExterQual = "Gd" then dEQ_2 = 1; else dEQ_2 = 0;
+if ExterQual = "TA" then dEQ_3 = 1; else dEQ_3 = 0;
+if ExterQual = "Fa" then dEQ_4 = 1; else dEQ_4 = 0;
+if ExterQual = "Po" then dEQ_5 = 1; else dEQ_5 = 0;
+
+if ExterCond = "Ex" then dEC_1 = 1; else dEC_1 = 0;
+if ExterCond = "Gd" then dEC_2 = 1; else dEC_2 = 0;
+if ExterCond = "TA" then dEC_3 = 1; else dEC_3 = 0;
+if ExterCond = "Fa" then dEC_4 = 1; else dEC_4 = 0;
+if ExterCond = "Po" then dEC_5 = 1; else dEC_5 = 0;
+
+if HeatingQC = "Ex" then dHQ_1 = 1; else dHQ_1 = 0;
+if HeatingQC = "Gd" then dHQ_2 = 1; else dHQ_2 = 0;
+if HeatingQC = "TA" then dHQ_3 = 1; else dHQ_3 = 0;
+if HeatingQC = "Fa" then dHQ_4 = 1; else dHQ_4 = 0;
+if HeatingQC = "Po" then dHQ_5 = 1; else dHQ_5 = 0;
+
+if SaleType = "WD" then dST_1 = 1; else dST_1 = 0;
+if SaleType = "CWD" then dST_2 = 1; else dST_2 = 0;
+if SaleType = "VWD" then dST_3 = 1; else dST_3 = 0;
+if SaleType = "New" then dST_4 = 1; else dST_4 = 0;
+if SaleType = "COD" then dST_5 = 1; else dST_5 = 0;
+if SaleType = "Con" then dST_6 = 1; else dST_6 = 0;
+if SaleType = "ConLw" then dST_7 = 1; else dST_7 = 0;
+if SaleType = "ConLI" then dST_8 = 1; else dST_8 = 0;
+if SaleType = "ConLD" then dST_9 = 1; else dST_9 = 0;
+if SaleType = "Oth" then dST_10 = 1; else dST_10 = 0;
+
+if Exterior2nd = "AsbShng" then dEX2_1 = 1; else dEX2_1 = 0;
+if Exterior2nd = "AsphShn" then dEX2_2 = 1; else dEX2_2 = 0;
+if Exterior2nd = "BrkComm" then dEX2_3 = 1; else dEX2_3 = 0;
+if Exterior2nd = "BrkFace" then dEX2_4 = 1; else dEX2_4 = 0;
+if Exterior2nd = "CBlock" then dEX2_5 = 1; else dEX2_5 = 0;
+if Exterior2nd = "CemntBd" then dEX2_6 = 1; else dEX2_6 = 0;
+if Exterior2nd = "HdBoard" then dEX2_7 = 1; else dEX2_7 = 0;
+if Exterior2nd = "ImStucc" then dEX2_8 = 1; else dEX2_8 = 0;
+if Exterior2nd = "MetalSd" then dEX2_9 = 1; else dEX2_9 = 0;
+if Exterior2nd = "Other" then dEX2_10 = 1; else dEX2_10 = 0;
+if Exterior2nd = "PlyWood" then dEX2_11 = 1; else dEX2_11 = 0;
+if Exterior2nd = "PreCast" then dEX2_12 = 1; else dEX2_12 = 0;
+if Exterior2nd = "Stone" then dEX2_13 = 1; else dEX2_13 = 0;
+if Exterior2nd = "Stucco" then dEX2_14 = 1; else dEX2_14 = 0;
+if Exterior2nd = "VinylSd" then dEX2_15 = 1; else dEX2_15 = 0;
+if Exterior2nd = "Wd Sdng" then dEX2_16 = 1; else dEX2_16 = 0;
+if Exterior2nd = "WdShing" then dEX2_17 = 1; else dEX2_17 = 0;
+run;
+
+
+
+proc glmselect data = reg5 plots = (CriterionPanel ASE ASEPlot) seed = 444;					*3rd-Pass Analysis, Automated Selection and CV, using additional categorical levels;		
+partition fraction(validate=0.3 test=0.2);
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath
+	dMS_1 dMS_2 dMS_3 dMS_4 dMS_5 dMS_6 dMS_7 dMS_8
+	dSC_1 dSC_2 dSC_3 dSC_4 dSC_5 dSC_6
+	dLC_1 dLC_2 dLC_3 dLC_4 dLC_5
+	dEQ_1 dEQ_2 dEQ_3 dEQ_4 dEQ_5
+	dEC_1 dEC_2 dEC_3 dEC_4 dEC_5
+	dHQ_1 dHQ_2 dHQ_3 dHQ_4 dHQ_5
+	dKQ_1 dKQ_2 dKQ_3 dKQ_4 dKQ_5
+	dST_1 dST_2 dST_3 dST_4 dST_5
+		dST_6 dST_7 dST_8 dST_9 dST_10
+	dEX2_1 dEX2_2 dEX2_3 dEX2_4 dEX2_5
+		dEX2_6 dEX2_7 dEX2_8 dEX2_9 dEX2_10
+		dEX2_11 dEX2_12 dEX2_13 dEX2_14 dEX2_15 dEX2_16 dEX2_17
+/ selection = lasso(choose = AIC stop = AICC) details = steps showpvalues;
+run;
+
+
+proc reg data = reg5 plots(label)=(CooksD) outest= reg_est10 edf;							*3rd-Pass Hypothesis, enriching parsimonious model, consulting automated selection and chosen by inductive reasoning;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6 / VIF;
+run; quit;
+
+
+data reg6; set reg5;																		*Removing unusually high leverage observation;
+if _n_ = 31 then delete;
+run;
+
+proc contents data = reg6; run;																*Verifying deleted observation;
+
+
+proc reg data = reg6 plots(label)=(CooksD) outest= reg_est11 edf;							*Registering effect of high leverage removal;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6 / VIF;
+run; quit;
+
+proc glm data = reg6 plots = all outstat = reg_est12;										*Registering PROC GLM output statistics;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6 / cli solution;
+output out = results4 p = predict4;
+run;
+
+
+
+proc glmselect data = reg6 plots = (CriterionPanel ASE ASEPlot) seed = 777;					*4th-Pass Analysis, Automated Selection and CV, enriching model with remaining variables of interest;
+partition fraction(validate=0.3 test=0.2);
+
+class Neighborhood MSZoning Street LotFrontage LotShape LandContour Utilities LotConfig 
+LandSlope Condition1 Condition2 BldgType HouseStyle RoofStyle RoofMatl Exterior1st Exterior2nd 
+MasVnrType ExterQual ExterCond Foundation BsmtQual BsmtCond BsmtExposure BsmtFinType1 BsmtFinType2 
+Heating HeatingQC CentralAir Electrical KitchenQual FireplaceQu GarageType GarageFinish 
+GarageQual GarageCond PavedDrive SaleType SaleCondition / param = glm;
+ 
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6
+
+LotFrontage MasVnrArea MSSubClass BsmtFinSF1 BsmtUnfSF BsmtHalfBath FullBath HalfBath BedroomAbvGr
+TotRmsAbvGrd GarageArea WoodDeckSF OpenPorchSF MoSold YrSold BsmtQual BsmtCond BsmtExposure BsmtFinType1 BsmtFinType2 
+Electrical FireplaceQu GarageType GarageYrBlt GarageFinish GarageQual GarageCond Street LotShape LandContour 
+Utilities LotConfig LandSlope Neighborhood Condition1 Condition2 BldgType HouseStyle Roofstyle RoofMatl
+Exterior1st Exterior2nd ExterQual ExterCond Foundation Heating HeatingQC CentralAir PavedDrive SaleType  
+
+/ selection = stepwise(choose = AIC stop = AICC include = 16) details = steps showpvalues;
+run;
+
+
+
+
+
+proc reg data = reg6 plots(label)=(CooksD) outest= reg_est13 edf;							*Rich Preferred Model, including 2 additional variables;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6
+	dHQ_1 BsmtFinSF1 / VIF;
+output out = reg_results predicted = reg_predict;
+run; quit;
+
+proc glm data = reg6 plots = all outstat = reg_est14;										*Registering PROC GLM output statistics for rich preferred model;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6
+	dHQ_1 BsmtFinSF1 / cli solution;
+output out = results5 p = predict5;
+run;
+
+
+
+data reg7; set reg6;																		*5th-Pass Analysis, dummy coding additional categorical variable levels;
+if Neighborhood = "Blmngtn" then d16 = 1; else d16 = 0;
+if Neighborhood = "Blueste" then d17 = 1; else d17 = 0;
+if Neighborhood = "CollgCr" then d18 = 1; else d18 = 0;
+if Neighborhood = "Crawfor" then d19 = 1; else d19 = 0;
+if Neighborhood = "IDOTRR" then d20 = 1; else d20 = 0;
+if Neighborhood = "MeadowV" then d21 = 1; else d21 = 0;
+if Neighborhood = "NPkVill" then d22 = 1; else d22 = 0;
+if Neighborhood = "SWISU" then d23 = 1; else d23 = 0;
+if Neighborhood = "Timber" then d24 = 1; else d24 = 0;
+if Street = "Gravel" then dS_1 = 1; else dS_1 = 0;
+if LotShape = "IR1" then dLS_1 = 1; else dLS_1 = 0;
+if LotShape = "IR2" then dLS_2 = 1; else dLS_2 = 0;
+if LotShape = "IR3" then dLS_3 = 1; else dLS_3 = 0;
+if LandContour = "Bnk" then dLaC_1 = 1; else dLC_1 = 0;
+if LandContour = "HLS" then dLaC_2 = 1; else dLC_2 = 0;
+if LandContour = "Low" then dLaC_3 = 1; else dLC_3 = 0;
+if LandSlope = "Gtl" then dLaS_1 = 1; else dLaS_1 = 0;
+if LandSlope = "Mod" then dLaS_2 = 1; else dLaS_2 = 0;
+if Exterior1st = "AsbShng" then dE1_1 = 1; else dE1_1 = 0;
+if Exterior1st = "BrkComm" then dE1_2 = 1; else dE1_2 = 0;
+if Exterior1st = "BrkFace" then dE1_3 = 1; else dE1_3 = 0;
+if Exterior1st = "CemntBd" then dE1_4 = 1; else dE1_4 = 0;
+if Exterior1st = "HdBoard" then dE1_5 = 1; else dE1_5 = 0;
+if Exterior1st = "MetalSd" then dE1_6 = 1; else dE1_6 = 0;
+if Exterior1st = "Other" then dE1_7 = 1; else dE1_7 = 0;
+if Exterior1st = "Plywood" then dE1_8 = 1; else dE1_8 = 0;
+if Exterior1st = "PreCast" then dE1_9 = 1; else dE1_9 = 0;
+if Exterior1st = "Stone" then dE1_10 = 1; else dE1_10 = 0;
+if Exterior1st = "VinylSd" then dE1_11 = 1; else dE1_11 = 0;
+if Exterior1st = "Wd Sdng" then dE1_12 = 1; else dE1_12 = 0;
+if Foundation = "BrkTil" then dF_1 = 1; else dF_1 = 0;
+if Foundation = "CBlock" then dF_2 = 1; else dF_2 = 0;
+if Foundation = "PConc" then dF_3 = 1; else dF_3 = 0;
+if Foundation = "Slab" then dF_4 = 1; else dF_4 = 0;
+if Heating = "Floor" then dH_1 = 1; else dH_1 = 0;
+if Heating = "GasA" then dH_2 = 1; else dH_2 = 0;
+if Heating = "GasW" then dH_3 = 1; else dH_3 = 0;
+if Heating = "Grav" then dH_4 = 1; else dH_4 = 0;
+if Heating = "OthW" then dH_5 = 1; else dH_5 = 0;
+if CentralAir = "N" then dCA_1 = 1; else dCA_1 = 0;
+if PavedDrive = "P" then dPD_1 = 1; else dPD_1 = 0;
+if PavedDrive = "N" then dPD_2 = 1; else dPD_2 = 0;
+if BsmtQual = "Ex" then dBQ_1 = 1; else dBQ_1 = 0;
+if BsmtQual = "Gd" then dBQ_2 = 1; else dBQ_2 = 0;
+if BsmtQual = "Fa" then dBQ_3 = 1; else dBQ_3 = 0;
+if BsmtQual = "Po" then dBQ_4 = 1; else dBQ_4 = 0;
+if BsmtQual = "NA" then dBQ_5 = 1; else dBQ_5 = 0;
+if BsmtCond = "Ex" then dBC_1 = 1; else dBC_1 = 0;
+if BsmtCond = "Gd" then dBC_2 = 1; else dBC_2 = 0;
+if BsmtCond = "Fa" then dBC_3 = 1; else dBC_3 = 0;
+if BsmtCond = "Po" then dBC_4 = 1; else dBC_4 = 0;
+if BsmtCond = "NA" then dBC_5 = 1; else dBC_5 = 0;
+if BsmtExposure = "Gd" then dBE_1 = 1; else dBE_1 = 0;
+if BsmtExposure = "Av" then dBE_2 = 1; else dBE_2 = 0;
+if BsmtExposure = "Mn" then dBE_3 = 1; else dBE_3 = 0;
+if BsmtExposure = "NA" then dBE_4 = 1; else dBE_4 = 0;
+if BsmtFinType1 = "GLQ" then dBFT_1 = 1; else dBFT_1 = 0;
+if BsmtFinType1 = "ALQ" then dBFT_2 = 1; else dBFT_2 = 0;
+if BsmtFinType1 = "BLQ" then dBFT_3 = 1; else dBFT_3 = 0;
+if BsmtFinType1 = "Rec" then dBFT_4 = 1; else dBFT_4 = 0;
+if BsmtFinType1 = "LwQ" then dBFT_5 = 1; else dBFT_5 = 0;
+if BsmtFinType1 = "NA" then dBFT_6 = 1; else dBFT_6 = 0;
+if BsmtFinType2 = "GLQ" then dBFT2_1 = 1; else dBFT2_1 = 0;
+if BsmtFinType2 = "ALQ" then dBFT2_2 = 1; else dBFT2_2 = 0;
+if BsmtFinType2 = "BLQ" then dBFT2_3 = 1; else dBFT2_3 = 0;
+if BsmtFinType2 = "Rec" then dBFT2_4 = 1; else dBFT2_4 = 0;
+if BsmtFinType2 = "LwQ" then dBFT2_5 = 1; else dBFT2_5 = 0;
+if BsmtFinType2 = "NA" then dBFT2_6 = 1; else dBFT2_6 = 0;
+if GarageType = "2Types" then dGT_1 = 1; else dGT_1 = 0;
+if GarageType = "Attchd" then dGT_2 = 1; else dGT_2 = 0;
+if GarageType = "Basment" then dGT_3 = 1; else dGT_3 = 0;
+if GarageType = "BuiltIn" then dGT_4 = 1; else dGT_4 = 0;
+if GarageType = "CarPort" then dGT_5 = 1; else dGT_5 = 0;
+if GarageType = "NA" then dGT_6 = 1; else dGT_6 = 0;
+if GarageFinish = "Fin" then dGF_1 = 1; else dGF_1 = 0;
+if GarageFinish = "RFn" then dGF_2 = 1; else dGF_2 = 0;
+if GarageFinish = "NA" then dGF_3 = 1; else dGF_3 = 0;
+if GarageQual = "Ex" then dGQ_1 = 1; else dGQ_1 = 0;
+if GarageQual = "Gd" then dGQ_2 = 1; else dGQ_2 = 0;
+if GarageQual = "Fa" then dGQ_3 = 1; else dGQ_3 = 0;
+if GarageQual = "Po" then dGQ_4 = 1; else dGQ_4 = 0;
+if GarageQual = "NA" then dGQ_5 = 1; else dGQ_5 = 0;
+if GarageCond = "Gd" then dGC_1 = 1; else dGC_1 = 0;
+if GarageCond = "Fa" then dGC_2 = 1; else dGC_2 = 0;
+if GarageCond = "Po" then dGC_3 = 1; else dGC_3 = 0;
+if GarageCond = "NA" then dGC_4 = 1; else dGC_4 = 0;
+if Electrical = "FuseA" then dE_1 = 1; else dE_1 = 0;
+if Electrical = "FuseF" then dE_2 = 1; else dE_2 = 0;
+if Electrical = "FuseP" then dE_3 = 1; else dE_3 = 0;
+if HouseStyle = "1Story" then dHS_1 = 1; else dHS_1 = 0;
+if HouseStyle = "1.5Fin" then dHS_2 = 1; else dHS_2 = 0;
+if HouseStyle = "1.5Unf" then dHS_3 = 1; else dHS_3 = 0;
+if HouseStyle = "2Story" then dHS_4 = 1; else dHS_4 = 0;
+if HouseStyle = "2.5Fin" then dHS_5 = 1; else dHS_5 = 0;
+if HouseStyle = "2.5Unf" then dHS_6 = 1; else dHS_6 = 0;
+if HouseStyle = "SFoyer" then dHS_7 = 1; else dHS_7 = 0;
+if FireplaceQu = "Ex" then dFQ_1 = 1; else dFQ_1 = 0;
+if FireplaceQu = "Gd" then dFQ_2 = 1; else dFQ_2 = 0;
+if Condition1 = "Norm" then dC1_1 = 1; else dC1_1 = 0;
+if Condition1 = "Artery" then dC1_2 = 1; else dC1_2 = 0;
+if Condition1 = "Feedr" then dC1_3 = 1; else dC1_3 = 0;
+if Condition1 = "PosN" then dC1_4 = 1; else dC1_4 = 0;
+if Condition1 = "PosA" then dC1_5 = 1; else dC1_5 = 0;
+if Condition1 = "RRAn" then dC1_6 = 1; else dC1_6 = 0;
+if Condition1 = "RRAe" then dC1_7 = 1; else dC1_7 = 0;
+if Condition1 = "RRNe" then dC1_8 = 1; else dC1_8 = 0;
+if RoofStyle = "Flat" then dRS_1 = 1; else dRS_1 = 0;
+if RoofStyle = "Gable" then dRS_2 = 1; else dRS_2 = 0;
+if RoofStyle = "Gambrel" then dRS_3 = 1; else dRS_3 = 0;
+if RoofStyle = "Hip" then dRS_4 = 1; else dRS_4 = 0;
+if RoofStyle = "Mansard" then dRS_5 = 1; else dRS_5 = 0;
+if RoofMatl = "ClyTile" then dRM_1 = 1; else dRM_1 = 0;
+if RoofMatl = "CompShg" then dRM_2 = 1; else dRM_2 = 0;
+if RoofMatl = "Membran" then dRM_3 = 1; else dRM_3 = 0;
+if RoofMatl = "Metal" then dRM_4 = 1; else dRM_4 = 0;
+if RoofMatl = "Tar&Grv" then dRM_5 = 1; else dRM_5 = 0;
+if RoofMatl = "WdShake" then dRM_6 = 1; else dRM_6 = 0;
+run;
+
+proc contents data = reg7; run;																*Verifying dummy coding procedure;
+
+
+proc freq data = reg7;																		*Verifying missing value contents of unsuitable predictor;
+tables LandContour*dLaC_1;
+run;
+
+
+proc glmselect data = reg7 plots = (CriterionPanel ASE ASEPlot) seed = 2222;				*5th-Pass Analysis, Stepwise Automated Selection and CV, enriching model with remaining variables of interest;
+partition fraction(validate=0.3 test=0.2);
+ 
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6
+	dHQ_1 BsmtFinSF1 
+
+d1 d2 d3 d4 d5 d6 d7 d8 d9 d10 d11 d12 d13 d14 d15 d16 d17 d18 d19 d20 d21 d22 d23 d24
+dS_1
+dLS_1 dLS_2 dLS_3
+/*
+dLaC_1 dLaC_2 dLaC_3																		*NB: Missing values throw error;
+*/
+dLaS_1 dLaS_2
+dE1_1 dE1_2 dE1_3 dE1_4 dE1_5 dE1_6 dE1_7 dE1_8 dE1_9 dE1_10 dE1_11 dE1_12
+dF_1 dF_2 dF_3 dF_4
+dH_1 dH_2 dH_3 dH_4 dH_5
+dCA_1
+dPD_1 dPD_2
+dBQ_1 dBQ_2 dBQ_3 dBQ_4 dBQ_5
+dBC_1 dBC_2 dBC_3 dBC_4 dBC_5
+dBE_1 dBE_2 dBE_3 dBE_4
+dBFT_1 dBFT_2 dBFT_3 dBFT_4 dBFT_5 dBFT_6
+dBFT2_1 dBFT2_2 dBFT2_3 dBFT2_4 dBFT2_5 dBFT2_6
+dGT_1 dGT_2 dGT_3 dGT_4 dGT_5 dGT_6
+dGF_1 dGF_2 dGF_3
+dGQ_1 dGQ_2 dGQ_3 dGQ_4 dGQ_5
+dGC_1 dGC_2 dGC_3 dGC_4
+dE_1 dE_2 dE_3
+dHS_1 dHS_2 dHS_3 dHS_4 dHS_5 dHS_6 dHS_7
+dFQ_1 dFQ_2
+dC1_1 dC1_2 dC1_3 dC1_4 dC1_5 dC1_6 dC1_7 dC1_8
+dRS_1 dRS_2 dRS_3 dRS_4 dRS_5
+dRM_1 dRM_2 dRM_3 dRM_4 dRM_5 dRM_6
+dLC_2 dLC_3 dLC_4 dLC_5
+dHQ_2 dHQ_4
+dST_2 dST_3 dST_4 dST_5 dST_6 dST_7 dST_8 dST_9 dST_10
+dEC_1 dEC_2 dEC_4
+dEQ_1 dEQ_2 dEQ_4 dEQ_5
+dBT_1 dBT_2 dBT_3 dBT_5
+dC2_1 dC2_2 dC2_4 dC2_5 dC2_6
+
+/ selection = stepwise(choose = AIC stop = AICC include = 18) details = steps showpvalues;
+run;
+
+data reg8; set reg7;																		*Removing unusually high leverage observations, based on PROC REG below;
+if _n_ = 410 then delete;
+if _n_ = 999 then delete;
+run;
+
+data reg9; set reg8;																		*Removing additional high leverage observation, based on PROC REG below;
+if _n_ = 966 then delete;
+run;
+
+proc reg data = reg9 plots(label)=(CooksD) outest= new_reg_est edf;							*Alternative rich model, based on Stepwise selection, manually removing predictors not significant at alpha = .05;
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_3 dMS_6
+	BsmtFinSF1
+
+d2 d5 d10 d12 d14 d19
+dE1_2 dE1_3
+dF_3
+dH_4
+dBQ_1
+dBE_1
+dGQ_1
+dC1_1 dC1_7
+	/ VIF;
+output out = reg_results2 predicted = reg_predict2;
+run; quit;
+
+
+
+
+proc glmselect data = reg7 plots = (CriterionPanel ASE ASEPlot) seed = 22222;				*5th-Pass Analysis, Forward Automated Selection and CV, enriching model with remaining variables of interest;
+partition fraction(validate=0.3 test=0.2);
+ 
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6
+	dHQ_1 BsmtFinSF1 
+
+d1 d2 d3 d4 d5 d6 d7 d8 d9 d10 d11 d12 d13 d14 d15 d16 d17 d18 d19 d20 d21 d22 d23 d24
+dS_1
+dLS_1 dLS_2 dLS_3
+/*
+dLaC_1 dLaC_2 dLaC_3																		*NB: Missing values throw error;
+*/
+dLaS_1 dLaS_2
+dE1_1 dE1_2 dE1_3 dE1_4 dE1_5 dE1_6 dE1_7 dE1_8 dE1_9 dE1_10 dE1_11 dE1_12
+dF_1 dF_2 dF_3 dF_4
+dH_1 dH_2 dH_3 dH_4 dH_5
+dCA_1
+dPD_1 dPD_2
+dBQ_1 dBQ_2 dBQ_3 dBQ_4 dBQ_5
+dBC_1 dBC_2 dBC_3 dBC_4 dBC_5
+dBE_1 dBE_2 dBE_3 dBE_4
+dBFT_1 dBFT_2 dBFT_3 dBFT_4 dBFT_5 dBFT_6
+dBFT2_1 dBFT2_2 dBFT2_3 dBFT2_4 dBFT2_5 dBFT2_6
+dGT_1 dGT_2 dGT_3 dGT_4 dGT_5 dGT_6
+dGF_1 dGF_2 dGF_3
+dGQ_1 dGQ_2 dGQ_3 dGQ_4 dGQ_5
+dGC_1 dGC_2 dGC_3 dGC_4
+dE_1 dE_2 dE_3
+dHS_1 dHS_2 dHS_3 dHS_4 dHS_5 dHS_6 dHS_7
+dFQ_1 dFQ_2
+dC1_1 dC1_2 dC1_3 dC1_4 dC1_5 dC1_6 dC1_7 dC1_8
+dRS_1 dRS_2 dRS_3 dRS_4 dRS_5
+dRM_1 dRM_2 dRM_3 dRM_4 dRM_5 dRM_6
+dLC_2 dLC_3 dLC_4 dLC_5
+dHQ_2 dHQ_4
+dST_2 dST_3 dST_4 dST_5 dST_6 dST_7 dST_8 dST_9 dST_10
+dEC_1 dEC_2 dEC_4
+dEQ_1 dEQ_2 dEQ_4 dEQ_5
+dBT_1 dBT_2 dBT_3 dBT_5
+dC2_1 dC2_2 dC2_4 dC2_5 dC2_6
+
+/ selection = forward(choose = AIC stop = AICC include = 18) details = steps showpvalues;
+run;
+
+data reg10; set reg7;																		*Removing unusually high leverage observations, based on PROC REG below;
+if _n_ = 410 then delete;
+if _n_ = 587 then delete;
+if _n_ = 999 then delete;
+run;
+
+proc reg data = reg10 plots(label)=(CooksD) outest= new_reg_est2 edf;						*Alternative rich model, based on Forward selection, manually removing predictors not significant at alpha = .05;	
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dMS_2 dMS_3 dMS_6
+	dHQ_1 BsmtFinSF1
+
+d1 d5 d10 d14 d18 d19
+dE1_2 dE1_3
+dF_3
+dBQ_1
+dBE_1
+dGQ_1
+dC1_2 dC1_7
+dST_4
+	/ VIF;
+output out = reg_results3 predicted = reg_predict3;
+run; quit;
+
+
+
+proc glmselect data = reg7 plots = (CriterionPanel ASE ASEPlot) seed = 222222;				*5th-Pass Analysis, Backward Automated Selection and CV, enriching model with remaining variables of interest;	
+partition fraction(validate=0.3 test=0.2);
+ 
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dSC_1 dSC_3 dMS_2 dMS_3 dMS_6
+	dHQ_1 BsmtFinSF1 
+
+d1 d2 d3 d4 d5 d6 d7 d8 d9 d10 d11 d12 d13 d14 d15 d16 d17 d18 d19 d20 d21 d22 d23 d24
+dS_1
+dLS_1 dLS_2 dLS_3
+/*
+dLaC_1 dLaC_2 dLaC_3																		*NB: Missing values throw error;
+*/
+dLaS_1 dLaS_2
+dE1_1 dE1_2 dE1_3 dE1_4 dE1_5 dE1_6 dE1_7 dE1_8 dE1_9 dE1_10 dE1_11 dE1_12
+dF_1 dF_2 dF_3 dF_4
+dH_1 dH_2 dH_3 dH_4 dH_5
+dCA_1
+dPD_1 dPD_2
+dBQ_1 dBQ_2 dBQ_3 dBQ_4 dBQ_5
+dBC_1 dBC_2 dBC_3 dBC_4 dBC_5
+dBE_1 dBE_2 dBE_3 dBE_4
+dBFT_1 dBFT_2 dBFT_3 dBFT_4 dBFT_5 dBFT_6
+dBFT2_1 dBFT2_2 dBFT2_3 dBFT2_4 dBFT2_5 dBFT2_6
+dGT_1 dGT_2 dGT_3 dGT_4 dGT_5 dGT_6
+dGF_1 dGF_2 dGF_3
+dGQ_1 dGQ_2 dGQ_3 dGQ_4 dGQ_5
+dGC_1 dGC_2 dGC_3 dGC_4
+dE_1 dE_2 dE_3
+dHS_1 dHS_2 dHS_3 dHS_4 dHS_5 dHS_6 dHS_7
+dFQ_1 dFQ_2
+dC1_1 dC1_2 dC1_3 dC1_4 dC1_5 dC1_6 dC1_7 dC1_8
+dRS_1 dRS_2 dRS_3 dRS_4 dRS_5
+dRM_1 dRM_2 dRM_3 dRM_4 dRM_5 dRM_6
+dLC_2 dLC_3 dLC_4 dLC_5
+dHQ_2 dHQ_4
+dST_2 dST_3 dST_4 dST_5 dST_6 dST_7 dST_8 dST_9 dST_10
+dEC_1 dEC_2 dEC_4
+dEQ_1 dEQ_2 dEQ_4 dEQ_5
+dBT_1 dBT_2 dBT_3 dBT_5
+dC2_1 dC2_2 dC2_4 dC2_5 dC2_6
+
+/ selection = backward(choose = AIC stop = AICC include = 18) details = steps showpvalues;
+run;
+
+data reg11; set reg7;																		*Removing unusually high leverage observation, based on PROC REG below;
+if _n_ = 88 then delete;
+run;
+
+data reg12; set reg11;																		*Removing additional high leverage observation, based on PROC REG below;
+if _n_ = 586 then delete;
+run;
+
+
+proc reg data = reg12 plots(label)=(CooksD) outest= new_reg_est3 edf;						*Alternative rich model, based on Backward selection, manually removing predictors not significant at alpha = .05;	
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dMS_2 dMS_3
+	BsmtFinSF1
+
+d5 d10 d14 d16 d18 d19
+dE1_5 dE1_8
+dBE_1
+dGC_2
+dFQ_2
+dC1_2
+dBT_3
+
+	/ VIF;
+output out = reg_results4 predicted = reg_predict4;
+run; quit;
+
+
+
+data reg13; set reg7;																		*Removing unusually high leverage observations, based on PROC REG below;
+if _n_ = 410 then delete;
+if _n_ = 999 then delete;
+run;
+
+
+proc reg data = reg13 plots(label)=(CooksD) outest= new_reg_est4 edf;						*Custom alternative rich model, based on Stepwise Forward and Backward selection, choosing predictors selected by at least 2 of 3 procedures, manually removing predictors not significant at alpha = .05;	
+model log_SalePrice = log_GrLivArea log_LotArea OverallQual OverallCond YearBuilt 
+	GarageCars Fireplaces "Kitche-1bvGr"n
+	TotalBsmtSF BsmtFullBath 
+	dKQ_3 dMS_3 dMS_6
+	BsmtFinSF1
+
+d5 d10 d14 d18 d19
+dE1_3
+dF_3
+dBQ_1
+dBE_1
+dGQ_1
+dC1_2
+dC1_7
+
+	/ VIF;
+output out = reg_results5 predicted = reg_predict5;
+run; quit;
+
+
+
+
